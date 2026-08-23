@@ -21,40 +21,56 @@ class LoyverseApi(private val token: String) {
     )
 
     /**
-     * Fetches items + their variants, then cross-references with inventory
-     * levels to get current stock per variant/store.
-     * NOTE: This is a simplified single-page fetch (first 250 items).
-     * Pagination via "cursor" should be added once this is confirmed working.
+     * Fetches ALL items + their variants (following pagination), then
+     * cross-references with ALL inventory levels to get current stock
+     * per variant/store.
      */
     fun fetchItemsWithStock(): List<Variant> {
-        val itemsJson = get("$baseUrl/items?limit=250")
-        val inventoryJson = get("$baseUrl/inventory?limit=250")
-
-        // Map variant_id -> in_stock from the inventory response
         val stockMap = HashMap<String, Double>()
         val storeMap = HashMap<String, String>()
-        val invLevels = inventoryJson.optJSONArray("inventory_levels") ?: JSONArray()
-        for (i in 0 until invLevels.length()) {
-            val lvl = invLevels.getJSONObject(i)
-            val vId = lvl.getString("variant_id")
-            stockMap[vId] = lvl.optDouble("in_stock", 0.0)
-            storeMap[vId] = lvl.optString("store_id", "")
-        }
 
-        val results = ArrayList<Variant>()
-        val items = itemsJson.optJSONArray("items") ?: JSONArray()
-        for (i in 0 until items.length()) {
-            val item = items.getJSONObject(i)
-            val itemName = item.optString("item_name", "Unnamed item")
-            val variants = item.optJSONArray("variants") ?: JSONArray()
-            for (v in 0 until variants.length()) {
-                val variant = variants.getJSONObject(v)
-                val variantId = variant.getString("variant_id")
-                val storeId = storeMap[variantId] ?: ""
-                val stock = stockMap[variantId] ?: 0.0
-                results.add(Variant(variantId, itemName, storeId, stock))
+        // Page through the entire inventory list
+        var cursor: String? = null
+        do {
+            val url = if (cursor == null) "$baseUrl/inventory?limit=250"
+                      else "$baseUrl/inventory?limit=250&cursor=$cursor"
+            val inventoryJson = get(url)
+            val invLevels = inventoryJson.optJSONArray("inventory_levels") ?: JSONArray()
+            for (i in 0 until invLevels.length()) {
+                val lvl = invLevels.getJSONObject(i)
+                val vId = lvl.getString("variant_id")
+                stockMap[vId] = lvl.optDouble("in_stock", 0.0)
+                storeMap[vId] = lvl.optString("store_id", "")
             }
-        }
+            cursor = inventoryJson.optString("cursor", "").ifEmpty { null }
+        } while (cursor != null)
+
+        // Page through the entire items list
+        val results = ArrayList<Variant>()
+        cursor = null
+        do {
+            val url = if (cursor == null) "$baseUrl/items?limit=250"
+                      else "$baseUrl/items?limit=250&cursor=$cursor"
+            val itemsJson = get(url)
+            val items = itemsJson.optJSONArray("items") ?: JSONArray()
+            for (i in 0 until items.length()) {
+                val item = items.getJSONObject(i)
+                val itemName = item.optString("item_name", "Unnamed item")
+                val variants = item.optJSONArray("variants") ?: JSONArray()
+                for (v in 0 until variants.length()) {
+                    val variant = variants.getJSONObject(v)
+                    val variantId = variant.getString("variant_id")
+                    val storeId = storeMap[variantId]
+                    // Skip variants with no store/stock entry - this means
+                    // "Track stock" is OFF for this item in Loyverse.
+                    if (storeId.isNullOrEmpty()) continue
+                    val stock = stockMap[variantId] ?: 0.0
+                    results.add(Variant(variantId, itemName, storeId, stock))
+                }
+            }
+            cursor = itemsJson.optString("cursor", "").ifEmpty { null }
+        } while (cursor != null)
+
         return results
     }
 
