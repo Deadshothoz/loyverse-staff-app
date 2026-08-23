@@ -88,8 +88,7 @@
     <ListView
         android:id="@+id/pickerListView"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_maxHeight="220dp"
+        android:layout_height="220dp"
         android:layout_margin="16dp"
         android:layout_marginTop="4dp"
         android:background="@drawable/search_box_bg"
