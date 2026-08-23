@@ -15,16 +15,25 @@ class LoyverseApi(private val token: String) {
 
     data class Variant(
         val variantId: String,
+        val itemId: String,
         val itemName: String,
         val storeId: String,
         val currentStock: Double,
-        val barcode: String
+        val barcode: String,
+        val trackStock: Boolean
     )
 
     /**
      * Fetches ALL items + their variants (following pagination), then
      * cross-references with ALL inventory levels to get current stock
      * per variant/store.
+     *
+     * Items are included regardless of their "Track stock" setting:
+     *  - If tracked, storeId + currentStock come from the inventory endpoint.
+     *  - If NOT tracked, there's no inventory_levels entry, so we fall back
+     *    to the store_id listed in the variant's own "stores" array (used
+     *    for per-store pricing/availability) and report currentStock as 0,
+     *    since there's no real stock number to show yet.
      */
     fun fetchItemsWithStock(): List<Variant> {
         val stockMap = HashMap<String, Double>()
@@ -56,18 +65,33 @@ class LoyverseApi(private val token: String) {
             val items = itemsJson.optJSONArray("items") ?: JSONArray()
             for (i in 0 until items.length()) {
                 val item = items.getJSONObject(i)
+                val itemId = item.getString("id")
                 val itemName = item.optString("item_name", "Unnamed item")
+                val trackStock = item.optBoolean("track_stock", false)
                 val variants = item.optJSONArray("variants") ?: JSONArray()
                 for (v in 0 until variants.length()) {
                     val variant = variants.getJSONObject(v)
                     val variantId = variant.getString("variant_id")
-                    val storeId = storeMap[variantId]
-                    // Skip variants with no store/stock entry - this means
-                    // "Track stock" is OFF for this item in Loyverse.
-                    if (storeId.isNullOrEmpty()) continue
-                    val stock = stockMap[variantId] ?: 0.0
                     val barcode = variant.optString("barcode", "")
-                    results.add(Variant(variantId, itemName, storeId, stock, barcode))
+
+                    var storeId = storeMap[variantId]
+                    var stock = stockMap[variantId] ?: 0.0
+
+                    if (storeId.isNullOrEmpty()) {
+                        // Not tracked (or no inventory entry yet) - fall back
+                        // to the store_id from the variant's own per-store
+                        // pricing list, so we still know which store to
+                        // write to once tracking gets turned on.
+                        val stores = variant.optJSONArray("stores")
+                        val fallbackStoreId = if (stores != null && stores.length() > 0) {
+                            stores.getJSONObject(0).optString("store_id", "")
+                        } else ""
+                        if (fallbackStoreId.isEmpty()) continue // truly no store info at all
+                        storeId = fallbackStoreId
+                        stock = 0.0
+                    }
+
+                    results.add(Variant(variantId, itemId, itemName, storeId, stock, barcode, trackStock))
                 }
             }
             cursor = itemsJson.optString("cursor", "").ifEmpty { null }
@@ -94,6 +118,22 @@ class LoyverseApi(private val token: String) {
         val body = JSONObject()
         body.put("inventory_levels", levels)
         post("$baseUrl/inventory", body)
+    }
+
+    /**
+     * Turns "Track stock" ON for an item. Loyverse's /v1.0/items endpoint
+     * only accepts GET and POST - updates go through POST with the item's
+     * id included in the body (there is no PUT /items/{id}).
+     *
+     * Note: this is an item-level setting, so it applies to ALL of that
+     * item's variants at once - only needs to be called once per item,
+     * even if multiple variants of the same item are being updated.
+     */
+    fun updateItemTrackStock(itemId: String, trackStock: Boolean) {
+        val body = JSONObject()
+        body.put("id", itemId)
+        body.put("track_stock", trackStock)
+        post("$baseUrl/items", body)
     }
 
     private fun get(urlStr: String): JSONObject {
