@@ -30,7 +30,9 @@
             android:id="@+id/saveTokenButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Save Token" />
+            android:text="Save Token"
+            android:backgroundTint="@color/brand_primary"
+            android:textColor="#FFFFFF" />
     </LinearLayout>
 
     <!-- Main app content, shown once token exists -->
