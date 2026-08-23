@@ -167,10 +167,24 @@ class AddStockActivity : AppCompatActivity() {
 
     private fun syncChanges() {
         val updates = ArrayList<Triple<String, String, Double>>()
+        // Item IDs that need "Track stock" turned on before we can write
+        // an inventory level for their variants.
+        val itemIdsToEnableTracking = LinkedHashSet<String>()
+
         for ((variantId, variant) in workingItems) {
             val addQty = pendingChanges[variantId] ?: continue
             if (addQty == 0.0) continue
-            val newStock = variant.currentStock + addQty
+
+            val newStock = if (variant.trackStock) {
+                // Already tracked - normal behavior, add on top of current stock.
+                variant.currentStock + addQty
+            } else {
+                // Not tracked yet - it's starting from 0, so the entered
+                // quantity IS the final stock, and we need to flip tracking
+                // on for this item first.
+                itemIdsToEnableTracking.add(variant.itemId)
+                addQty
+            }
             updates.add(Triple(variant.variantId, variant.storeId, newStock))
         }
 
@@ -183,7 +197,17 @@ class AddStockActivity : AppCompatActivity() {
         executor.execute {
             try {
                 val token = prefs.getString("api_token", "") ?: ""
-                LoyverseApi(token).updateStockBatch(updates)
+                val api = LoyverseApi(token)
+
+                // Step 1: turn on Track stock for any previously-untracked
+                // items (one call per item, not per variant).
+                for (itemId in itemIdsToEnableTracking) {
+                    api.updateItemTrackStock(itemId, true)
+                }
+
+                // Step 2: write the actual stock levels.
+                api.updateStockBatch(updates)
+
                 runOnUiThread {
                     Toast.makeText(this, "Done! ${updates.size} item(s) updated.", Toast.LENGTH_LONG).show()
                     workingItems.clear()
@@ -208,7 +232,11 @@ class AddStockActivity : AppCompatActivity() {
             val view = layoutInflater.inflate(R.layout.row_picker_item, parent, false)
             val variant = pickerResults[position]
             view.findViewById<TextView>(R.id.pickerNameText).text = variant.itemName
-            view.findViewById<TextView>(R.id.pickerStockText).text = "Stock: ${variant.currentStock}"
+            view.findViewById<TextView>(R.id.pickerStockText).text = if (variant.trackStock) {
+                "Stock: ${variant.currentStock}"
+            } else {
+                "Stock: 0 (not tracked yet)"
+            }
             return view
         }
     }
@@ -229,7 +257,11 @@ class AddStockActivity : AppCompatActivity() {
             val qtyInput = view.findViewById<EditText>(R.id.addQtyInput)
 
             nameText.text = variant.itemName
-            stockText.text = "Stock: ${variant.currentStock}"
+            stockText.text = if (variant.trackStock) {
+                "Stock: ${variant.currentStock}"
+            } else {
+                "Stock: 0 (not tracked yet)"
+            }
             qtyInput.setText(pendingChanges[variant.variantId]?.toString() ?: "")
 
             qtyInput.addTextChangedListener(object : android.text.TextWatcher {
