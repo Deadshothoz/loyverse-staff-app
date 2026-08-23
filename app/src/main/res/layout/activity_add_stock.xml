@@ -44,6 +44,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
+        android:layout_marginBottom="0dp"
         android:padding="12dp"
         android:background="@drawable/search_box_bg"
         android:hint="Search or scan barcode..."
@@ -52,22 +53,46 @@
         android:imeOptions="actionSearch"
         android:singleLine="true" />
 
-    <!-- Loading / status message -->
+    <!-- Temporary picker list - shows matches while typing/scanning.
+         Tap a row to add it to the working list below. -->
+    <ListView
+        android:id="@+id/pickerListView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_maxHeight="220dp"
+        android:layout_margin="16dp"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/search_box_bg"
+        android:divider="@color/divider"
+        android:dividerHeight="1dp"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/statusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="16dp"
+        android:paddingTop="4dp"
         android:textColor="@color/text_secondary" />
 
-    <!-- Results list - hidden until a search/scan produces matches -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="8dp"
+        android:text="Items to update:"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <!-- Persistent working list - stays on screen until Confirm is pressed -->
     <ListView
-        android:id="@+id/resultsListView"
+        android:id="@+id/workingListView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:layout_marginTop="4dp"
-        android:visibility="gone" />
+        android:divider="@color/divider"
+        android:dividerHeight="1dp" />
 
     <!-- Confirm button pinned at bottom -->
     <Button
