@@ -58,8 +58,7 @@
     <ListView
         android:id="@+id/pickerListView"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_maxHeight="220dp"
+        android:layout_height="220dp"
         android:layout_margin="16dp"
         android:layout_marginTop="4dp"
         android:background="@drawable/search_box_bg"
@@ -86,15 +85,13 @@
 
     <!-- Persistent working list - stays on screen until Confirm is pressed -->
     <ListView
-        android:id="@+id/pickerListView"
+        android:id="@+id/workingListView"
         android:layout_width="match_parent"
-        android:layout_height="220dp"
-        android:layout_margin="16dp"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:layout_marginTop="4dp"
-        android:background="@drawable/search_box_bg"
         android:divider="@color/divider"
-        android:dividerHeight="1dp"
-        android:visibility="gone" />
+        android:dividerHeight="1dp" />
 
     <!-- Confirm button pinned at bottom -->
     <Button
