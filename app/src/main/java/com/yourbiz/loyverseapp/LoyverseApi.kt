@@ -74,10 +74,14 @@ class LoyverseApi(private val token: String) {
                     val variantId = variant.getString("variant_id")
                     val barcode = variant.optString("barcode", "")
 
-                    var storeId = storeMap[variantId]
-                    var stock = stockMap[variantId] ?: 0.0
+                    val trackedStoreId = storeMap[variantId]
+                    val finalStoreId: String
+                    val finalStock: Double
 
-                    if (storeId.isNullOrEmpty()) {
+                    if (!trackedStoreId.isNullOrEmpty()) {
+                        finalStoreId = trackedStoreId
+                        finalStock = stockMap[variantId] ?: 0.0
+                    } else {
                         // Not tracked (or no inventory entry yet) - fall back
                         // to the store_id from the variant's own per-store
                         // pricing list, so we still know which store to
@@ -87,11 +91,11 @@ class LoyverseApi(private val token: String) {
                             stores.getJSONObject(0).optString("store_id", "")
                         } else ""
                         if (fallbackStoreId.isEmpty()) continue // truly no store info at all
-                        storeId = fallbackStoreId
-                        stock = 0.0
+                        finalStoreId = fallbackStoreId
+                        finalStock = 0.0
                     }
 
-                    results.add(Variant(variantId, itemId, itemName, storeId, stock, barcode, trackStock))
+                    results.add(Variant(variantId, itemId, itemName, finalStoreId, finalStock, barcode, trackStock))
                 }
             }
             cursor = itemsJson.optString("cursor", "").ifEmpty { null }
