@@ -171,4 +171,119 @@ class AddStockActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun
+    private fun syncChanges() {
+        val updates = ArrayList<Triple<String, String, Double>>()
+        // Item IDs that need "Track stock" turned on before we can write
+        // an inventory level for their variants.
+        val itemIdsToEnableTracking = LinkedHashSet<String>()
+
+        for ((variantId, variant) in workingItems) {
+            val addQty = pendingChanges[variantId] ?: continue
+            if (addQty == 0.0) continue
+
+            val newStock = if (variant.trackStock) {
+                // Already tracked - normal behavior, add on top of current stock.
+                variant.currentStock + addQty
+            } else {
+                // Not tracked yet - it's starting from 0, so the entered
+                // quantity IS the final stock, and we need to flip tracking
+                // on for this item first.
+                itemIdsToEnableTracking.add(variant.itemId)
+                addQty
+            }
+            updates.add(Triple(variant.variantId, variant.storeId, newStock))
+        }
+
+        if (updates.isEmpty()) {
+            Toast.makeText(this, "No quantities entered", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        statusText.text = "Syncing ${updates.size} item(s)..."
+        executor.execute {
+            try {
+                val token = prefs.getString("api_token", "") ?: ""
+                val api = LoyverseApi(token)
+
+                // Step 1: turn on Track stock for any previously-untracked
+                // items (one call per item, not per variant).
+                for (itemId in itemIdsToEnableTracking) {
+                    api.updateItemTrackStock(itemId, true)
+                }
+
+                // Step 2: write the actual stock levels.
+                api.updateStockBatch(updates)
+
+                runOnUiThread {
+                    Toast.makeText(this, "Done! ${updates.size} item(s) updated.", Toast.LENGTH_LONG).show()
+                    workingItems.clear()
+                    pendingChanges.clear()
+                    refreshWorkingListView()
+                    loadCatalog()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Sync failed: ${e.message}"
+                }
+            }
+        }
+    }
+
+    private inner class PickerAdapter : BaseAdapter() {
+        override fun getCount() = pickerResults.size
+        override fun getItem(position: Int) = pickerResults[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = layoutInflater.inflate(R.layout.row_picker_item, parent, false)
+            val variant = pickerResults[position]
+            view.findViewById<TextView>(R.id.pickerNameText).text = variant.itemName
+            view.findViewById<TextView>(R.id.pickerStockText).text = if (variant.trackStock) {
+                "Stock: ${variant.currentStock}"
+            } else {
+                "Stock: 0 (not tracked yet)"
+            }
+            return view
+        }
+    }
+
+    private inner class WorkingAdapter : BaseAdapter() {
+        private val items = workingItems.values.toList()
+
+        override fun getCount() = items.size
+        override fun getItem(position: Int) = items[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = layoutInflater.inflate(R.layout.row_item, parent, false)
+            val variant = items[position]
+
+            val nameText = view.findViewById<TextView>(R.id.itemNameText)
+            val stockText = view.findViewById<TextView>(R.id.currentStockText)
+            val qtyInput = view.findViewById<EditText>(R.id.addQtyInput)
+
+            nameText.text = variant.itemName
+            stockText.text = if (variant.trackStock) {
+                "Stock: ${variant.currentStock}"
+            } else {
+                "Stock: 0 (not tracked yet)"
+            }
+            qtyInput.setText(pendingChanges[variant.variantId]?.toString() ?: "")
+
+            qtyInput.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val value = s?.toString()?.toDoubleOrNull()
+                    if (value == null || value == 0.0) {
+                        pendingChanges.remove(variant.variantId)
+                    } else {
+                        pendingChanges[variant.variantId] = value
+                    }
+                }
+            })
+
+            return view
+        }
+    }
+}
