@@ -1,5 +1,6 @@
 package com.yourbiz.loyverseapp
 
+import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
 import android.view.KeyEvent
@@ -17,18 +18,15 @@ class AddStockActivity : AppCompatActivity() {
 
     private lateinit var searchInput: EditText
     private lateinit var statusText: TextView
-    private lateinit var resultsListView: ListView
+    private lateinit var pickerListView: ListView
+    private lateinit var workingListView: ListView
 
     private var allVariants: List<LoyverseApi.Variant> = emptyList()
-    private var displayedResults: List<LoyverseApi.Variant> = emptyList()
+    private var pickerResults: List<LoyverseApi.Variant> = emptyList()
 
-    // variantId -> quantity to add. Persists across multiple searches so
-    // staff can scan several different items before hitting Confirm.
+    private val workingItems = LinkedHashMap<String, LoyverseApi.Variant>()
     private val pendingChanges = HashMap<String, Double>()
 
-    // Buffer used to catch scanner input even when the search box isn't
-    // focused. Barcode scanners on Sunmi/iMin act like a fast keyboard
-    // that ends with an Enter keystroke.
     private val scanBuffer = StringBuilder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,10 +37,11 @@ class AddStockActivity : AppCompatActivity() {
 
         searchInput = findViewById(R.id.searchInput)
         statusText = findViewById(R.id.statusText)
-        resultsListView = findViewById(R.id.resultsListView)
+        pickerListView = findViewById(R.id.pickerListView)
+        workingListView = findViewById(R.id.workingListView)
 
         findViewById<TextView>(R.id.backButton).setOnClickListener { finish() }
-        findViewById<Button>(R.id.confirmButton).setOnClickListener { confirmChanges() }
+        findViewById<Button>(R.id.confirmButton).setOnClickListener { askConfirmThenSync() }
 
         searchInput.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
@@ -59,14 +58,16 @@ class AddStockActivity : AppCompatActivity() {
             }
         })
 
+        pickerListView.setOnItemClickListener { _, _, position, _ ->
+            val variant = pickerResults.getOrNull(position) ?: return@setOnItemClickListener
+            addToWorkingList(variant)
+            searchInput.setText("")
+        }
+
+        refreshWorkingListView()
         loadCatalog()
     }
 
-    /**
-     * Catches key input even when the search box doesn't have focus, so a
-     * barcode scanner works anywhere on this screen without staff needing
-     * to tap into the search box first.
-     */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (!searchInput.hasFocus() && event.action == KeyEvent.ACTION_DOWN) {
             if (event.keyCode == KeyEvent.KEYCODE_ENTER) {
@@ -109,42 +110,66 @@ class AddStockActivity : AppCompatActivity() {
     private fun runSearch(query: String) {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) {
-            displayedResults = emptyList()
-            resultsListView.visibility = View.GONE
-            resultsListView.adapter = null
+            pickerResults = emptyList()
+            pickerListView.visibility = View.GONE
+            pickerListView.adapter = null
             return
         }
 
-        // Exact barcode match takes priority (typical for scanner input)
         val exactBarcodeMatches = allVariants.filter {
             it.barcode.isNotEmpty() && it.barcode == trimmed
         }
-        displayedResults = if (exactBarcodeMatches.isNotEmpty()) {
+        pickerResults = if (exactBarcodeMatches.isNotEmpty()) {
             exactBarcodeMatches
         } else {
             allVariants.filter { it.itemName.contains(trimmed, ignoreCase = true) }
         }
 
-        if (displayedResults.isEmpty()) {
-            resultsListView.visibility = View.GONE
+        if (pickerResults.isEmpty()) {
+            pickerListView.visibility = View.GONE
             statusText.text = "No matching item found."
         } else {
-            resultsListView.visibility = View.VISIBLE
-            statusText.text = "${displayedResults.size} result(s)"
+            pickerListView.visibility = View.VISIBLE
+            statusText.text = "Tap an item to add it to your list."
         }
-        resultsListView.adapter = ResultsAdapter()
+        pickerListView.adapter = PickerAdapter()
     }
 
-    private fun confirmChanges() {
-        if (pendingChanges.isEmpty()) {
-            Toast.makeText(this, "No quantities entered", Toast.LENGTH_SHORT).show()
+    private fun addToWorkingList(variant: LoyverseApi.Variant) {
+        workingItems[variant.variantId] = variant
+        refreshWorkingListView()
+    }
+
+    private fun refreshWorkingListView() {
+        workingListView.adapter = WorkingAdapter()
+    }
+
+    private fun askConfirmThenSync() {
+        if (workingItems.isEmpty()) {
+            Toast.makeText(this, "No items added yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val itemsWithQty = workingItems.keys.count {
+            (pendingChanges[it] ?: 0.0) != 0.0
+        }
+        if (itemsWithQty == 0) {
+            Toast.makeText(this, "Enter a quantity for at least one item", Toast.LENGTH_SHORT).show()
             return
         }
 
+        AlertDialog.Builder(this)
+            .setTitle("Confirm stock update")
+            .setMessage("You're about to update stock for $itemsWithQty item(s) in Loyverse. Continue?")
+            .setPositiveButton("Confirm") { _, _ -> syncChanges() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun syncChanges() {
         val updates = ArrayList<Triple<String, String, Double>>()
-        for ((variantId, addQty) in pendingChanges) {
+        for ((variantId, variant) in workingItems) {
+            val addQty = pendingChanges[variantId] ?: continue
             if (addQty == 0.0) continue
-            val variant = allVariants.find { it.variantId == variantId } ?: continue
             val newStock = variant.currentStock + addQty
             updates.add(Triple(variant.variantId, variant.storeId, newStock))
         }
@@ -161,9 +186,10 @@ class AddStockActivity : AppCompatActivity() {
                 LoyverseApi(token).updateStockBatch(updates)
                 runOnUiThread {
                     Toast.makeText(this, "Done! ${updates.size} item(s) updated.", Toast.LENGTH_LONG).show()
+                    workingItems.clear()
                     pendingChanges.clear()
-                    searchInput.setText("")
-                    loadCatalog() // refresh stock numbers
+                    refreshWorkingListView()
+                    loadCatalog()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -173,14 +199,30 @@ class AddStockActivity : AppCompatActivity() {
         }
     }
 
-    private inner class ResultsAdapter : BaseAdapter() {
-        override fun getCount() = displayedResults.size
-        override fun getItem(position: Int) = displayedResults[position]
+    private inner class PickerAdapter : BaseAdapter() {
+        override fun getCount() = pickerResults.size
+        override fun getItem(position: Int) = pickerResults[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = layoutInflater.inflate(R.layout.row_picker_item, parent, false)
+            val variant = pickerResults[position]
+            view.findViewById<TextView>(R.id.pickerNameText).text = variant.itemName
+            view.findViewById<TextView>(R.id.pickerStockText).text = "Stock: ${variant.currentStock}"
+            return view
+        }
+    }
+
+    private inner class WorkingAdapter : BaseAdapter() {
+        private val items = workingItems.values.toList()
+
+        override fun getCount() = items.size
+        override fun getItem(position: Int) = items[position]
         override fun getItemId(position: Int) = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val view = layoutInflater.inflate(R.layout.row_item, parent, false)
-            val variant = displayedResults[position]
+            val variant = items[position]
 
             val nameText = view.findViewById<TextView>(R.id.itemNameText)
             val stockText = view.findViewById<TextView>(R.id.currentStockText)
