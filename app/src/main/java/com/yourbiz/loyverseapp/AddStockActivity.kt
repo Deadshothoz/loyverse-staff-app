@@ -20,6 +20,8 @@ class AddStockActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var pickerListView: ListView
     private lateinit var workingListView: ListView
+    private lateinit var loadingOverlay: View
+    private lateinit var confirmButton: Button
 
     private var allVariants: List<LoyverseApi.Variant> = emptyList()
     private var pickerResults: List<LoyverseApi.Variant> = emptyList()
@@ -39,9 +41,11 @@ class AddStockActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         pickerListView = findViewById(R.id.pickerListView)
         workingListView = findViewById(R.id.workingListView)
+        loadingOverlay = findViewById(R.id.loadingOverlay)
+        confirmButton = findViewById(R.id.confirmButton)
 
         findViewById<TextView>(R.id.backButton).setOnClickListener { finish() }
-        findViewById<Button>(R.id.confirmButton).setOnClickListener { askConfirmThenSync() }
+        confirmButton.setOnClickListener { askConfirmThenSync() }
 
         searchInput.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
@@ -95,6 +99,12 @@ class AddStockActivity : AppCompatActivity() {
     }
 
     private fun loadCatalog() {
+        // Block the whole page until the catalog is actually ready - the
+        // fetch can take a noticeable moment, and the page is genuinely
+        // unusable (search would just come up empty) until it's done.
+        loadingOverlay.visibility = View.VISIBLE
+        searchInput.isEnabled = false
+        confirmButton.isEnabled = false
         statusText.text = "Loading catalog..."
         executor.execute {
             try {
@@ -104,10 +114,16 @@ class AddStockActivity : AppCompatActivity() {
                 allVariants = variants
                 runOnUiThread {
                     statusText.text = "Ready. Search or scan an item to begin."
+                    loadingOverlay.visibility = View.GONE
+                    searchInput.isEnabled = true
+                    confirmButton.isEnabled = true
                 }
             } catch (e: Exception) {
                 runOnUiThread {
                     statusText.text = "Failed to load catalog: ${e.message}"
+                    loadingOverlay.visibility = View.GONE
+                    searchInput.isEnabled = true
+                    confirmButton.isEnabled = true
                 }
             }
         }
@@ -143,6 +159,12 @@ class AddStockActivity : AppCompatActivity() {
 
     private fun addToWorkingList(variant: LoyverseApi.Variant) {
         workingItems[variant.variantId] = variant
+        refreshWorkingListView()
+    }
+
+    private fun removeFromWorkingList(variantId: String) {
+        workingItems.remove(variantId)
+        pendingChanges.remove(variantId)
         refreshWorkingListView()
     }
 
@@ -261,6 +283,11 @@ class AddStockActivity : AppCompatActivity() {
             val nameText = view.findViewById<TextView>(R.id.itemNameText)
             val stockText = view.findViewById<TextView>(R.id.currentStockText)
             val qtyInput = view.findViewById<EditText>(R.id.addQtyInput)
+            val deleteButton = view.findViewById<ImageView>(R.id.deleteButton)
+
+            deleteButton.setOnClickListener {
+                removeFromWorkingList(variant.variantId)
+            }
 
             nameText.text = variant.itemName
             stockText.text = if (variant.trackStock) {
