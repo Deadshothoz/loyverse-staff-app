@@ -4,9 +4,7 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="12dp"
-    android:background="@color/surface"
-    android:clickable="true"
-    android:focusable="true">
+    android:background="@color/surface">
 
     <TextView
         android:id="@+id/pickerNameText"
