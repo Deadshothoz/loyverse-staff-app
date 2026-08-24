@@ -16,12 +16,20 @@ class HomeActivity : AppCompatActivity() {
             startActivity(Intent(this, AddStockActivity::class.java))
         }
 
-        findViewById<LinearLayout>(R.id.tileSetComposite).setOnClickListener {
-            Toast.makeText(this, "Set Composite - coming soon", Toast.LENGTH_SHORT).show()
+        findViewById<LinearLayout>(R.id.tileReduceStock).setOnClickListener {
+            startActivity(Intent(this, ReduceStockActivity::class.java))
         }
 
-        findViewById<LinearLayout>(R.id.tileAddVariant).setOnClickListener {
-            Toast.makeText(this, "Add Variant - coming soon", Toast.LENGTH_SHORT).show()
+        findViewById<LinearLayout>(R.id.tileCheckStock).setOnClickListener {
+            Toast.makeText(this, "Check Stock - coming soon", Toast.LENGTH_SHORT).show()
+        }
+
+        findViewById<LinearLayout>(R.id.tileStockCount).setOnClickListener {
+            Toast.makeText(this, "Stock Count - coming soon", Toast.LENGTH_SHORT).show()
+        }
+
+        findViewById<LinearLayout>(R.id.tileManagePools).setOnClickListener {
+            Toast.makeText(this, "Manage Pools - coming soon", Toast.LENGTH_SHORT).show()
         }
     }
 }
