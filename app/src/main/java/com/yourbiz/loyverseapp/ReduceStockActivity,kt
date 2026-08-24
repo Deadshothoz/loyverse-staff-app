@@ -1,0 +1,366 @@
+package com.yourbiz.loyverseapp
+
+import android.app.AlertDialog
+import android.content.Context
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import java.util.concurrent.Executors
+
+/**
+ * Mirrors AddStockActivity, but subtracts the entered quantity from current
+ * stock instead of adding it. Two key differences from Add Stock:
+ *  - Untracked items (Track stock off) have nothing real to reduce, so
+ *    they're skipped at sync time with a message, rather than being
+ *    auto-enabled like Add Stock does.
+ *  - Stock can never go below 0 - if someone enters a reduction larger
+ *    than what's currently on hand, it's clamped to 0 rather than going
+ *    negative.
+ */
+class ReduceStockActivity : AppCompatActivity() {
+
+    private val executor = Executors.newSingleThreadExecutor()
+    private lateinit var prefs: android.content.SharedPreferences
+
+    private lateinit var searchInput: EditText
+    private lateinit var statusText: TextView
+    private lateinit var pickerListView: ListView
+    private lateinit var workingListView: ListView
+    private lateinit var loadingOverlay: View
+    private lateinit var confirmButton: Button
+
+    private var allVariants: List<LoyverseApi.Variant> = emptyList()
+    private var pickerResults: List<LoyverseApi.Variant> = emptyList()
+
+    private val workingItems = LinkedHashMap<String, LoyverseApi.Variant>()
+    private val pendingChanges = HashMap<String, Double>()
+
+    private val scanBuffer = StringBuilder()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_reduce_stock)
+
+        prefs = getSharedPreferences("loyverse_prefs", Context.MODE_PRIVATE)
+
+        searchInput = findViewById(R.id.searchInput)
+        statusText = findViewById(R.id.statusText)
+        pickerListView = findViewById(R.id.pickerListView)
+        workingListView = findViewById(R.id.workingListView)
+        loadingOverlay = findViewById(R.id.loadingOverlay)
+        confirmButton = findViewById(R.id.confirmButton)
+
+        findViewById<TextView>(R.id.backButton).setOnClickListener { finish() }
+        confirmButton.setOnClickListener { askConfirmThenSync() }
+
+        searchInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                runSearch(searchInput.text.toString())
+                true
+            } else false
+        }
+
+        searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                runSearch(s?.toString() ?: "")
+            }
+        })
+
+        pickerListView.setOnItemClickListener { _, _, position, _ ->
+            val variant = pickerResults.getOrNull(position) ?: return@setOnItemClickListener
+            addToWorkingList(variant)
+            searchInput.setText("")
+        }
+
+        refreshWorkingListView()
+        loadCatalog()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val focusedIsTextField = currentFocus is EditText
+        if (!focusedIsTextField && event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_ENTER) {
+                val scanned = scanBuffer.toString()
+                scanBuffer.clear()
+                if (scanned.isNotEmpty()) {
+                    searchInput.setText(scanned)
+                    runSearch(scanned)
+                }
+                return true
+            }
+            val c = event.unicodeChar
+            if (c != 0) {
+                scanBuffer.append(c.toChar())
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun loadCatalog() {
+        if (ItemCache.variants.isNotEmpty()) {
+            allVariants = ItemCache.variants
+            loadingOverlay.visibility = View.GONE
+            searchInput.isEnabled = true
+            confirmButton.isEnabled = true
+            statusText.text = "Ready. Search or scan an item to begin."
+            refreshCatalogInBackground()
+            return
+        }
+
+        loadingOverlay.visibility = View.VISIBLE
+        searchInput.isEnabled = false
+        confirmButton.isEnabled = false
+        statusText.text = "Loading catalog..."
+        executor.execute {
+            try {
+                val token = prefs.getString("api_token", "") ?: ""
+                val variants = LoyverseApi(token).fetchItemsWithStock()
+                ItemCache.variants = variants
+                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                allVariants = variants
+                runOnUiThread {
+                    statusText.text = "Ready. Search or scan an item to begin."
+                    loadingOverlay.visibility = View.GONE
+                    searchInput.isEnabled = true
+                    confirmButton.isEnabled = true
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Failed to load catalog: ${e.message}"
+                    loadingOverlay.visibility = View.GONE
+                    searchInput.isEnabled = true
+                    confirmButton.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun refreshCatalogInBackground() {
+        executor.execute {
+            try {
+                val token = prefs.getString("api_token", "") ?: ""
+                val variants = LoyverseApi(token).fetchItemsWithStock()
+                ItemCache.variants = variants
+                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                runOnUiThread {
+                    allVariants = variants
+                    if (searchInput.text.isNotEmpty()) {
+                        runSearch(searchInput.text.toString())
+                    }
+                }
+            } catch (e: Exception) {
+                // Silent failure - just keep using whatever is cached.
+            }
+        }
+    }
+
+    private fun runSearch(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            pickerResults = emptyList()
+            pickerListView.visibility = View.GONE
+            pickerListView.adapter = null
+            return
+        }
+
+        val exactBarcodeMatches = allVariants.filter {
+            it.barcode.isNotEmpty() && it.barcode == trimmed
+        }
+        pickerResults = if (exactBarcodeMatches.isNotEmpty()) {
+            exactBarcodeMatches
+        } else {
+            allVariants.filter { it.itemName.contains(trimmed, ignoreCase = true) }
+        }
+
+        if (pickerResults.isEmpty()) {
+            pickerListView.visibility = View.GONE
+            statusText.text = "No matching item found."
+        } else {
+            pickerListView.visibility = View.VISIBLE
+            statusText.text = "Tap an item to add it to your list."
+        }
+        pickerListView.adapter = PickerAdapter()
+    }
+
+    private fun addToWorkingList(variant: LoyverseApi.Variant) {
+        workingItems[variant.variantId] = variant
+        refreshWorkingListView()
+    }
+
+    private fun removeFromWorkingList(variantId: String) {
+        workingItems.remove(variantId)
+        pendingChanges.remove(variantId)
+        refreshWorkingListView()
+    }
+
+    private fun refreshWorkingListView() {
+        workingListView.adapter = WorkingAdapter()
+    }
+
+    private fun askConfirmThenSync() {
+        if (workingItems.isEmpty()) {
+            Toast.makeText(this, "No items added yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val itemsWithQty = workingItems.keys.count {
+            (pendingChanges[it] ?: 0.0) != 0.0
+        }
+        if (itemsWithQty == 0) {
+            Toast.makeText(this, "Enter a quantity for at least one item", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Confirm stock reduction")
+            .setMessage("You're about to reduce stock for $itemsWithQty item(s) in Loyverse. Continue?")
+            .setPositiveButton("Confirm") { _, _ -> syncChanges() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun syncChanges() {
+        val updates = ArrayList<Triple<String, String, Double>>()
+        var skippedUntracked = 0
+
+        for ((variantId, variant) in workingItems) {
+            val reduceQty = pendingChanges[variantId] ?: continue
+            if (reduceQty == 0.0) continue
+
+            if (!variant.trackStock) {
+                // Nothing real to reduce for an untracked item - skip it
+                // rather than silently doing something meaningless.
+                skippedUntracked++
+                continue
+            }
+
+            // Never let stock go below 0, even if someone enters a
+            // reduction bigger than what's currently on hand.
+            val newStock = (variant.currentStock - reduceQty).coerceAtLeast(0.0)
+            updates.add(Triple(variant.variantId, variant.storeId, newStock))
+        }
+
+        if (updates.isEmpty()) {
+            val msg = if (skippedUntracked > 0) {
+                "Nothing to reduce - selected item(s) aren't tracked yet"
+            } else {
+                "No quantities entered"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        statusText.text = "Syncing ${updates.size} item(s)..."
+        executor.execute {
+            try {
+                val token = prefs.getString("api_token", "") ?: ""
+                val api = LoyverseApi(token)
+                api.updateStockBatch(updates)
+
+                runOnUiThread {
+                    val message = if (skippedUntracked > 0) {
+                        "Done! ${updates.size} item(s) updated ($skippedUntracked skipped - not tracked)."
+                    } else {
+                        "Done! ${updates.size} item(s) updated."
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    applyUpdatesToCache(updates)
+                    finish()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Sync failed: ${e.message}"
+                }
+            }
+        }
+    }
+
+    /**
+     * Updates ItemCache in place with the stock levels we just wrote to
+     * Loyverse, so the next time this screen (or Add Stock) opens, the
+     * cached data already reflects this reduction instantly.
+     */
+    private fun applyUpdatesToCache(updates: List<Triple<String, String, Double>>) {
+        val newStockByVariant = updates.associate { it.first to it.third }
+        ItemCache.variants = ItemCache.variants.map { variant ->
+            val newStock = newStockByVariant[variant.variantId]
+            if (newStock != null) {
+                variant.copy(currentStock = newStock)
+            } else {
+                variant
+            }
+        }
+    }
+
+    private inner class PickerAdapter : BaseAdapter() {
+        override fun getCount() = pickerResults.size
+        override fun getItem(position: Int) = pickerResults[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = layoutInflater.inflate(R.layout.row_picker_item, parent, false)
+            val variant = pickerResults[position]
+            view.findViewById<TextView>(R.id.pickerNameText).text = variant.itemName
+            view.findViewById<TextView>(R.id.pickerStockText).text = if (variant.trackStock) {
+                "Stock: ${variant.currentStock}"
+            } else {
+                "Stock: 0 (not tracked yet)"
+            }
+            return view
+        }
+    }
+
+    private inner class WorkingAdapter : BaseAdapter() {
+        private val items = workingItems.values.toList()
+
+        override fun getCount() = items.size
+        override fun getItem(position: Int) = items[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = layoutInflater.inflate(R.layout.row_item, parent, false)
+            val variant = items[position]
+
+            val nameText = view.findViewById<TextView>(R.id.itemNameText)
+            val stockText = view.findViewById<TextView>(R.id.currentStockText)
+            val qtyInput = view.findViewById<EditText>(R.id.addQtyInput)
+            val deleteButton = view.findViewById<ImageView>(R.id.deleteButton)
+
+            deleteButton.setOnClickListener {
+                removeFromWorkingList(variant.variantId)
+            }
+
+            nameText.text = variant.itemName
+            stockText.text = if (variant.trackStock) {
+                "Stock: ${variant.currentStock}"
+            } else {
+                "Stock: 0 (not tracked yet)"
+            }
+            qtyInput.hint = "-qty"
+            qtyInput.setText(pendingChanges[variant.variantId]?.toString() ?: "")
+
+            qtyInput.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    // Always treat entered value as a positive amount to
+                    // subtract - no need for a signed input here.
+                    val value = s?.toString()?.toDoubleOrNull()?.let { Math.abs(it) }
+                    if (value == null || value == 0.0) {
+                        pendingChanges.remove(variant.variantId)
+                    } else {
+                        pendingChanges[variant.variantId] = value
+                    }
+                }
+            })
+
+            return view
+        }
+    }
+}
