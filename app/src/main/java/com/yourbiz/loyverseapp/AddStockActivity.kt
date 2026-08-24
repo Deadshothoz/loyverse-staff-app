@@ -99,9 +99,21 @@ class AddStockActivity : AppCompatActivity() {
     }
 
     private fun loadCatalog() {
-        // Block the whole page until the catalog is actually ready - the
-        // fetch can take a noticeable moment, and the page is genuinely
-        // unusable (search would just come up empty) until it's done.
+        if (ItemCache.variants.isNotEmpty()) {
+            // We already have data from earlier this session - show it
+            // instantly, no blocking overlay, and quietly refresh behind
+            // the scenes so numbers don't go stale.
+            allVariants = ItemCache.variants
+            loadingOverlay.visibility = View.GONE
+            searchInput.isEnabled = true
+            confirmButton.isEnabled = true
+            statusText.text = "Ready. Search or scan an item to begin."
+            refreshCatalogInBackground()
+            return
+        }
+
+        // Nothing cached yet (first load this session) - there's genuinely
+        // nothing to show, so block until the first fetch completes.
         loadingOverlay.visibility = View.VISIBLE
         searchInput.isEnabled = false
         confirmButton.isEnabled = false
@@ -111,6 +123,7 @@ class AddStockActivity : AppCompatActivity() {
                 val token = prefs.getString("api_token", "") ?: ""
                 val variants = LoyverseApi(token).fetchItemsWithStock()
                 ItemCache.variants = variants
+                ItemCache.lastLoadedAt = System.currentTimeMillis()
                 allVariants = variants
                 runOnUiThread {
                     statusText.text = "Ready. Search or scan an item to begin."
@@ -125,6 +138,33 @@ class AddStockActivity : AppCompatActivity() {
                     searchInput.isEnabled = true
                     confirmButton.isEnabled = true
                 }
+            }
+        }
+    }
+
+    /**
+     * Re-fetches the catalog quietly in the background - no overlay, no
+     * disabled controls, no status text changes. Keeps the cache (and the
+     * currently-displayed list) from going stale without ever blocking
+     * the screen after the very first load.
+     */
+    private fun refreshCatalogInBackground() {
+        executor.execute {
+            try {
+                val token = prefs.getString("api_token", "") ?: ""
+                val variants = LoyverseApi(token).fetchItemsWithStock()
+                ItemCache.variants = variants
+                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                runOnUiThread {
+                    allVariants = variants
+                    // If the user is mid-search, quietly refresh the
+                    // results so they reflect the latest numbers.
+                    if (searchInput.text.isNotEmpty()) {
+                        runSearch(searchInput.text.toString())
+                    }
+                }
+            } catch (e: Exception) {
+                // Silent failure - just keep using whatever is cached.
             }
         }
     }
@@ -238,15 +278,31 @@ class AddStockActivity : AppCompatActivity() {
 
                 runOnUiThread {
                     Toast.makeText(this, "Done! ${updates.size} item(s) updated.", Toast.LENGTH_LONG).show()
-                    workingItems.clear()
-                    pendingChanges.clear()
-                    refreshWorkingListView()
-                    loadCatalog()
+                    applyUpdatesToCache(updates)
+                    finish()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
                     statusText.text = "Sync failed: ${e.message}"
                 }
+            }
+        }
+    }
+
+    /**
+     * Updates ItemCache in place with the stock levels we just wrote to
+     * Loyverse, so the next time Add Stock opens, the cached data already
+     * reflects this sync instantly - the background refresh will still
+     * true it up against the server shortly after.
+     */
+    private fun applyUpdatesToCache(updates: List<Triple<String, String, Double>>) {
+        val newStockByVariant = updates.associate { it.first to it.third }
+        ItemCache.variants = ItemCache.variants.map { variant ->
+            val newStock = newStockByVariant[variant.variantId]
+            if (newStock != null) {
+                variant.copy(currentStock = newStock, trackStock = true)
+            } else {
+                variant
             }
         }
     }
