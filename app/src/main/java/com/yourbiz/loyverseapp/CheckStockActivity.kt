@@ -131,15 +131,20 @@ class CheckStockActivity : AppCompatActivity() {
     private fun buildRows(variants: List<LoyverseApi.Variant>, categories: List<LoyverseApi.Category>) {
         val categoryNameById = categories.associate { it.id to it.name }
 
-        allRows = variants.map { variant ->
-            val categoryName = variant.categoryId?.let { categoryNameById[it] } ?: "No category"
-            val status = when {
-                variant.currentStock <= 0.0 -> "out"
-                variant.lowStockThreshold != null && variant.currentStock < variant.lowStockThreshold -> "low"
-                else -> "in"
+        allRows = variants
+            .filter { it.trackStock } // Loyverse's own stock views only ever
+                                       // consider tracked items - an untracked
+                                       // item has no real stock number to
+                                       // report, so it's excluded here too.
+            .map { variant ->
+                val categoryName = variant.categoryId?.let { categoryNameById[it] } ?: "No category"
+                val status = when {
+                    variant.currentStock <= 0.0 -> "out"
+                    variant.lowStockThreshold != null && variant.currentStock < variant.lowStockThreshold -> "low"
+                    else -> "in"
+                }
+                Row(variant.itemName, categoryName, variant.currentStock, status)
             }
-            Row(variant.itemName, categoryName, variant.currentStock, status)
-        }
 
         // Rebuild category dropdown from what actually exists in the catalog.
         val realCategoryNames = allRows
