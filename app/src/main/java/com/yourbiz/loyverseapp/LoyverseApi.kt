@@ -20,7 +20,14 @@ class LoyverseApi(private val token: String) {
         val storeId: String,
         val currentStock: Double,
         val barcode: String,
-        val trackStock: Boolean
+        val trackStock: Boolean,
+        val categoryId: String?,
+        val lowStockThreshold: Double?
+    )
+
+    data class Category(
+        val id: String,
+        val name: String
     )
 
     /**
@@ -68,11 +75,25 @@ class LoyverseApi(private val token: String) {
                 val itemId = item.getString("id")
                 val itemName = item.optString("item_name", "Unnamed item")
                 val trackStock = item.optBoolean("track_stock", false)
+                val categoryId = item.optString("category_id", "").ifEmpty { null }
                 val variants = item.optJSONArray("variants") ?: JSONArray()
                 for (v in 0 until variants.length()) {
                     val variant = variants.getJSONObject(v)
                     val variantId = variant.getString("variant_id")
                     val barcode = variant.optString("barcode", "")
+
+                    // Low stock threshold lives per-store on the variant's
+                    // own "stores" array, independent of the inventory
+                    // endpoint - so we read it the same way regardless of
+                    // whether the item is tracked or not. Single-store setup,
+                    // so we just take the first (only) store entry.
+                    val storesArray = variant.optJSONArray("stores")
+                    val firstStoreEntry = if (storesArray != null && storesArray.length() > 0) {
+                        storesArray.getJSONObject(0)
+                    } else null
+                    val lowStockThreshold = if (firstStoreEntry != null && !firstStoreEntry.isNull("low_stock")) {
+                        firstStoreEntry.optDouble("low_stock")
+                    } else null
 
                     val trackedStoreId = storeMap[variantId]
                     val finalStoreId: String
@@ -86,21 +107,45 @@ class LoyverseApi(private val token: String) {
                         // to the store_id from the variant's own per-store
                         // pricing list, so we still know which store to
                         // write to once tracking gets turned on.
-                        val stores = variant.optJSONArray("stores")
-                        val fallbackStoreId = if (stores != null && stores.length() > 0) {
-                            stores.getJSONObject(0).optString("store_id", "")
-                        } else ""
+                        val fallbackStoreId = firstStoreEntry?.optString("store_id", "") ?: ""
                         if (fallbackStoreId.isEmpty()) continue // truly no store info at all
                         finalStoreId = fallbackStoreId
                         finalStock = 0.0
                     }
 
-                    results.add(Variant(variantId, itemId, itemName, finalStoreId, finalStock, barcode, trackStock))
+                    results.add(
+                        Variant(
+                            variantId, itemId, itemName, finalStoreId, finalStock,
+                            barcode, trackStock, categoryId, lowStockThreshold
+                        )
+                    )
                 }
             }
             cursor = itemsJson.optString("cursor", "").ifEmpty { null }
         } while (cursor != null)
 
+        return results
+    }
+
+    /**
+     * Fetches all categories (id -> name), paginated the same way as
+     * items/inventory. Used by Check Stock to build the category filter
+     * and to show a readable category name per row instead of a raw ID.
+     */
+    fun fetchCategories(): List<Category> {
+        val results = ArrayList<Category>()
+        var cursor: String? = null
+        do {
+            val url = if (cursor == null) "$baseUrl/categories?limit=250"
+                      else "$baseUrl/categories?limit=250&cursor=$cursor"
+            val json = get(url)
+            val categories = json.optJSONArray("categories") ?: JSONArray()
+            for (i in 0 until categories.length()) {
+                val cat = categories.getJSONObject(i)
+                results.add(Category(cat.getString("id"), cat.optString("name", "Unnamed category")))
+            }
+            cursor = json.optString("cursor", "").ifEmpty { null }
+        } while (cursor != null)
         return results
     }
 
