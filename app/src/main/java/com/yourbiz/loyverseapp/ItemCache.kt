@@ -6,5 +6,6 @@ package com.yourbiz.loyverseapp
  */
 object ItemCache {
     var variants: List<LoyverseApi.Variant> = emptyList()
+    var categories: List<LoyverseApi.Category> = emptyList()
     var lastLoadedAt: Long = 0L
 }
