@@ -31,6 +31,10 @@
             android:name=".ReduceStockActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".CheckStockActivity"
+            android:exported="false" />
     </application>
 
 </manifest>
