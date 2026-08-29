@@ -21,7 +21,7 @@ class HomeActivity : AppCompatActivity() {
         }
 
         findViewById<LinearLayout>(R.id.tileCheckStock).setOnClickListener {
-            Toast.makeText(this, "Check Stock - coming soon", Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this, CheckStockActivity::class.java))
         }
 
         findViewById<LinearLayout>(R.id.tileStockCount).setOnClickListener {
