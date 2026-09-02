@@ -138,13 +138,21 @@ class CheckStockActivity : AppCompatActivity() {
                                        // report, so it's excluded here too.
             .map { variant ->
                 val categoryName = variant.categoryId?.let { categoryNameById[it] } ?: "No category"
-                val status = when {
+                // Loyverse only ever raises a stock alert for an item once
+                // a low-stock threshold has actually been configured for
+                // it. If no threshold is set, we ignore stock level
+                // entirely (even 0) - track_stock could just be flipped on
+                // accidentally with no real monitoring intent behind it.
+                val status = if (variant.lowStockThreshold == null) {
+                    "in"
+                } else when {
                     variant.currentStock <= 0.0 -> "out"
-                    variant.lowStockThreshold != null && variant.currentStock < variant.lowStockThreshold -> "low"
+                    variant.currentStock < variant.lowStockThreshold -> "low"
                     else -> "in"
                 }
                 Row(variant.itemName, categoryName, variant.currentStock, status)
             }
+            .sortedBy { it.displayName.lowercase() } // match Loyverse's own alphabetical ordering
 
         // Rebuild category dropdown from what actually exists in the catalog.
         val realCategoryNames = allRows
