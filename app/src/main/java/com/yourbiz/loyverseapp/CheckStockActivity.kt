@@ -84,12 +84,11 @@ class CheckStockActivity : AppCompatActivity() {
         executor.execute {
             try {
                 val token = prefs.getString("api_token", "") ?: ""
-                val api = LoyverseApi(token)
-                val variants = api.fetchItemsWithStock()
-                val categories = api.fetchCategories()
-                ItemCache.variants = variants
-                ItemCache.categories = categories
-                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                // Only downloads what changed since the last sync (full
+                // download only the very first time this session).
+                ItemCache.refresh(LoyverseApi(token))
+                val variants = ItemCache.variants
+                val categories = ItemCache.categories
                 runOnUiThread {
                     buildRows(variants, categories)
                     loadingOverlay.visibility = View.GONE
@@ -107,12 +106,11 @@ class CheckStockActivity : AppCompatActivity() {
         executor.execute {
             try {
                 val token = prefs.getString("api_token", "") ?: ""
-                val api = LoyverseApi(token)
-                val variants = api.fetchItemsWithStock()
-                val categories = api.fetchCategories()
-                ItemCache.variants = variants
-                ItemCache.categories = categories
-                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                // Only downloads what changed since the last sync (full
+                // download only the very first time this session).
+                ItemCache.refresh(LoyverseApi(token))
+                val variants = ItemCache.variants
+                val categories = ItemCache.categories
                 runOnUiThread {
                     buildRows(variants, categories)
                 }
