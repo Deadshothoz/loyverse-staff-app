@@ -22,11 +22,16 @@
             android:letterSpacing="0.05" />
     </FrameLayout>
 
-    <!-- Tile grid -->
-    <GridLayout
+    <!-- Tile grid, wrapped for pull-to-refresh -->
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipeRefresh"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_weight="1">
+
+    <GridLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:columnCount="2"
         android:rowCount="3"
         android:padding="16dp"
@@ -151,5 +156,7 @@
             android:layout_margin="8dp" />
 
     </GridLayout>
+
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
 </LinearLayout>
