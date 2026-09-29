@@ -121,9 +121,10 @@ class ReduceStockActivity : AppCompatActivity() {
         executor.execute {
             try {
                 val token = prefs.getString("api_token", "") ?: ""
-                val variants = LoyverseApi(token).fetchItemsWithStock()
-                ItemCache.variants = variants
-                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                // Only downloads what changed since the last sync (full
+                // download only the very first time this session).
+                ItemCache.refresh(LoyverseApi(token))
+                val variants = ItemCache.variants
                 allVariants = variants
                 runOnUiThread {
                     statusText.text = "Ready. Search or scan an item to begin."
@@ -146,9 +147,10 @@ class ReduceStockActivity : AppCompatActivity() {
         executor.execute {
             try {
                 val token = prefs.getString("api_token", "") ?: ""
-                val variants = LoyverseApi(token).fetchItemsWithStock()
-                ItemCache.variants = variants
-                ItemCache.lastLoadedAt = System.currentTimeMillis()
+                // Only downloads what changed since the last sync (full
+                // download only the very first time this session).
+                ItemCache.refresh(LoyverseApi(token))
+                val variants = ItemCache.variants
                 runOnUiThread {
                     allVariants = variants
                     if (searchInput.text.isNotEmpty()) {
