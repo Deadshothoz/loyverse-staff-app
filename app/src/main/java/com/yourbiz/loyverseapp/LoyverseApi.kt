@@ -30,10 +30,30 @@ class LoyverseApi(private val token: String) {
         val name: String
     )
 
+    /** Result of a fetch: full variant records for items that changed,
+     *  plus raw stock levels (variantId -> storeId, stock) for every
+     *  inventory level that changed. In a delta fetch these can differ -
+     *  a sale changes a variant's stock without touching the item itself,
+     *  so it shows up in stockLevels but not in variants. */
+    data class FetchResult(
+        val variants: List<Variant>,
+        val stockLevels: Map<String, Pair<String, Double>>
+    )
+
     /**
-     * Fetches ALL items + their variants (following pagination), then
-     * cross-references with ALL inventory levels to get current stock
-     * per variant/store.
+     * Full fetch: every item + variant, cross-referenced with every
+     * inventory level. Kept for the screens' own first-load path.
+     */
+    fun fetchItemsWithStock(): List<Variant> = fetch(null).variants
+
+    /**
+     * Fetches items + their variants (following pagination), then
+     * cross-references with inventory levels to get current stock per
+     * variant/store.
+     *
+     * If [updatedAtMin] is provided (ISO-8601), only items and inventory
+     * levels changed at or after that instant are returned - this is what
+     * makes repeat refreshes fast. Pass null for a full fetch.
      *
      * Items are included regardless of their "Track stock" setting:
      *  - If tracked, storeId + currentStock come from the inventory endpoint.
@@ -42,15 +62,16 @@ class LoyverseApi(private val token: String) {
      *    for per-store pricing/availability) and report currentStock as 0,
      *    since there's no real stock number to show yet.
      */
-    fun fetchItemsWithStock(): List<Variant> {
+    fun fetch(updatedAtMin: String?): FetchResult {
+        val filterParam = if (updatedAtMin != null) "&updated_at_min=$updatedAtMin" else ""
         val stockMap = HashMap<String, Double>()
         val storeMap = HashMap<String, String>()
 
-        // Page through the entire inventory list
+        // Page through the inventory list (only changes, if filtered)
         var cursor: String? = null
         do {
-            val url = if (cursor == null) "$baseUrl/inventory?limit=250"
-                      else "$baseUrl/inventory?limit=250&cursor=$cursor"
+            val url = if (cursor == null) "$baseUrl/inventory?limit=250$filterParam"
+                      else "$baseUrl/inventory?limit=250&cursor=$cursor$filterParam"
             val inventoryJson = get(url)
             val invLevels = inventoryJson.optJSONArray("inventory_levels") ?: JSONArray()
             for (i in 0 until invLevels.length()) {
@@ -62,12 +83,12 @@ class LoyverseApi(private val token: String) {
             cursor = inventoryJson.optString("cursor", "").ifEmpty { null }
         } while (cursor != null)
 
-        // Page through the entire items list
+        // Page through the items list (only changes, if filtered)
         val results = ArrayList<Variant>()
         cursor = null
         do {
-            val url = if (cursor == null) "$baseUrl/items?limit=250"
-                      else "$baseUrl/items?limit=250&cursor=$cursor"
+            val url = if (cursor == null) "$baseUrl/items?limit=250$filterParam"
+                      else "$baseUrl/items?limit=250&cursor=$cursor$filterParam"
             val itemsJson = get(url)
             val items = itemsJson.optJSONArray("items") ?: JSONArray()
             for (i in 0 until items.length()) {
@@ -124,7 +145,8 @@ class LoyverseApi(private val token: String) {
             cursor = itemsJson.optString("cursor", "").ifEmpty { null }
         } while (cursor != null)
 
-        return results
+        val stockLevels = stockMap.mapValues { (vId, stock) -> Pair(storeMap[vId] ?: "", stock) }
+        return FetchResult(results, stockLevels)
     }
 
     /**
