@@ -25,8 +25,11 @@ object ItemCache {
      * Loyverse only for what changed since then (fast) and merges it in.
      * Otherwise - or if the delta request fails for any reason - falls
      * back to a full fetch. Runs on the calling thread, so call it from a
-     * background executor, never the UI thread.
+     * background executor, never the UI thread. Synchronized so two
+     * refreshes running at once (e.g. pull-to-refresh on Home while a
+     * screen refreshes) queue up instead of overwriting each other.
      */
+    @Synchronized
     fun refresh(api: LoyverseApi) {
         val startedAt = System.currentTimeMillis()
         val since = lastLoadedAtIso()
