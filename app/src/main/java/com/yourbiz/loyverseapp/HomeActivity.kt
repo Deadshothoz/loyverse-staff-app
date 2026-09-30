@@ -39,14 +39,15 @@ class HomeActivity : AppCompatActivity() {
         }
 
         findViewById<LinearLayout>(R.id.tileManagePools).setOnClickListener {
-            Toast.makeText(this, "Manage Pools - coming soon", Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this, PoolsActivity::class.java))
         }
     }
 
     /**
      * Pull-to-refresh handler. ItemCache.refresh() asks Loyverse only for
      * what changed since the last sync when it can, and falls back to a
-     * full fetch otherwise. The spinner stays visible until it's done.
+     * full fetch otherwise. Pools are reloaded from the Google Sheet too.
+     * The spinner stays visible until it's done.
      */
     private fun refreshCatalog() {
         executor.execute {
@@ -54,9 +55,20 @@ class HomeActivity : AppCompatActivity() {
                 val prefs = getSharedPreferences("loyverse_prefs", Context.MODE_PRIVATE)
                 val token = prefs.getString("api_token", "") ?: ""
                 ItemCache.refresh(LoyverseApi(token))
+                // Pools too, if this device has been set up with the link. A
+                // pools problem shouldn't make the catalog refresh look failed.
+                var poolsFailed = false
+                PoolStore.getUrl(this)?.let { url ->
+                    try {
+                        PoolStore.load(url)
+                    } catch (e: Exception) {
+                        poolsFailed = true
+                    }
+                }
                 runOnUiThread {
                     swipeRefresh.isRefreshing = false
-                    Toast.makeText(this, "Catalog up to date", Toast.LENGTH_SHORT).show()
+                    val msg = if (poolsFailed) "Catalog up to date (pools couldn't load)" else "Catalog up to date"
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
