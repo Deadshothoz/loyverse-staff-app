@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashReporter.install(this) // catch any crash from here on, on any screen
         setContentView(R.layout.activity_main)
 
         prefs = getSharedPreferences("loyverse_prefs", Context.MODE_PRIVATE)
