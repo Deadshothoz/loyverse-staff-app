@@ -201,10 +201,32 @@ class LoyverseApi(private val token: String) {
      * even if multiple variants of the same item are being updated.
      */
     fun updateItemTrackStock(itemId: String, trackStock: Boolean) {
-        val body = JSONObject()
-        body.put("id", itemId)
-        body.put("track_stock", trackStock)
-        post("$baseUrl/items", body)
+        // Loyverse's POST /items saves the WHOLE item, not just the fields
+        // sent - sending only {id, track_stock} is rejected ("item_name must
+        // be set"), and leaving out variants/prices/barcodes could wipe them.
+        // So: fetch the item exactly as it is now, flip track_stock, and
+        // send everything back unchanged apart from that.
+        val raw = get("$baseUrl/items/$itemId")
+        val item = raw.optJSONObject("item") ?: raw
+
+        if (item.optBoolean("track_stock", false) == trackStock) return // already set
+
+        item.put("track_stock", trackStock)
+        removeReadOnlyFields(item)
+        val variants = item.optJSONArray("variants")
+        if (variants != null) {
+            for (i in 0 until variants.length()) {
+                variants.optJSONObject(i)?.let { removeReadOnlyFields(it) }
+            }
+        }
+        post("$baseUrl/items", item)
+    }
+
+    /** Timestamps are set by Loyverse itself and aren't part of an update. */
+    private fun removeReadOnlyFields(obj: JSONObject) {
+        obj.remove("created_at")
+        obj.remove("updated_at")
+        obj.remove("deleted_at")
     }
 
     private fun get(urlStr: String): JSONObject {
