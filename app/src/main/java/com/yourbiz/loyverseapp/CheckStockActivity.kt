@@ -33,7 +33,7 @@ class CheckStockActivity : AppCompatActivity() {
         val subtitle: String,
         val categoryName: String,   // "No category" if none; unused for pools
         val stockText: String,
-        /** "out", "low", "in" (has a minimum and is above it),
+        /** "out", "low" or "in" (has a minimum and is above it),
          *  "none" (no minimum set) or "untracked". */
         val status: String,
         val isPool: Boolean
@@ -174,7 +174,7 @@ class CheckStockActivity : AppCompatActivity() {
                     !variant.trackStock -> "untracked"
                     threshold == null -> "none"
                     variant.currentStock <= 0.0 -> "out"
-                    variant.currentStock < threshold -> "low"
+                    variant.currentStock <= threshold -> "low" // at or below the minimum
                     else -> "in"
                 }
                 Row(
