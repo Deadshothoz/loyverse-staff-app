@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="@color/background">
+
+        <!-- Header: BACK | POOLS | LINK (change the Google Sheet link) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:background="@color/brand_primary"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/backButton"
+                android:layout_width="60dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:padding="8dp"
+                android:text="BACK"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="15sp"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="POOLS"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="16sp"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/linkButton"
+                android:layout_width="60dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp"
+                android:padding="8dp"
+                android:text="LINK"
+                android:gravity="end"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="13sp"
+                android:clickable="true"
+                android:focusable="true" />
+        </LinearLayout>
+
+        <!-- Search pools by name -->
+        <EditText
+            android:id="@+id/searchInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="16dp"
+            android:layout_marginBottom="4dp"
+            android:padding="12dp"
+            android:background="@drawable/search_box_bg"
+            android:hint="Search pools..."
+            android:textColorHint="@color/brand_primary"
+            android:textColor="@color/text_primary"
+            android:imeOptions="actionSearch"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="4dp"
+            android:textColor="@color/text_secondary" />
+
+        <ListView
+            android:id="@+id/poolsListView"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:divider="@color/divider"
+            android:dividerHeight="1dp"
+            android:paddingBottom="88dp"
+            android:clipToPadding="false" />
+
+    </LinearLayout>
+
+    <!-- Green round "+" button, like Loyverse's own item list -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/addPoolButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:contentDescription="Add pool"
+        android:src="@android:drawable/ic_input_add"
+        app:backgroundTint="@color/brand_primary"
+        app:tint="#FFFFFF" />
+
+    <!-- Full-screen loading overlay -->
+    <LinearLayout
+        android:id="@+id/loadingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#CCFFFFFF"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:indeterminateTint="@color/brand_primary" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Loading pools..."
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:textSize="15sp" />
+
+    </LinearLayout>
+
+</FrameLayout>
