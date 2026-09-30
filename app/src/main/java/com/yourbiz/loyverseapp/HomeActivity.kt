@@ -1,5 +1,8 @@
 package com.yourbiz.loyverseapp
 
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -16,6 +19,9 @@ class HomeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Also installed here: after a crash Android may reopen the app
+        // straight on Home, skipping the token screen.
+        CrashReporter.install(this)
         setContentView(R.layout.activity_home)
 
         swipeRefresh = findViewById(R.id.swipeRefresh)
@@ -41,6 +47,23 @@ class HomeActivity : AppCompatActivity() {
         findViewById<LinearLayout>(R.id.tileManagePools).setOnClickListener {
             startActivity(Intent(this, PoolsActivity::class.java))
         }
+
+        showLastCrashIfAny()
+    }
+
+    /** If the app crashed last time, show the error so it can be copied and sent. */
+    private fun showLastCrashIfAny() {
+        val crash = CrashReporter.takeLastCrash(this) ?: return
+        AlertDialog.Builder(this)
+            .setTitle("The app crashed last time")
+            .setMessage("Tap COPY and send this to whoever is fixing the app:\n\n$crash")
+            .setPositiveButton("Copy") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Crash report", crash))
+                Toast.makeText(this, "Copied - paste it into the chat", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /**
