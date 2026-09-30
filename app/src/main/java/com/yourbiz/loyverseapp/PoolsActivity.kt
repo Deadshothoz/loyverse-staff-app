@@ -8,7 +8,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.floatingactionbutton.FloatingActionButton
 import java.util.concurrent.Executors
 
 /**
@@ -40,7 +39,7 @@ class PoolsActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.linkButton).setOnClickListener {
             PoolStore.promptForUrl(this) { loadData(showOverlay = true) }
         }
-        findViewById<FloatingActionButton>(R.id.addPoolButton).setOnClickListener {
+        findViewById<TextView>(R.id.addPoolButton).setOnClickListener {
             if (PoolStore.getUrl(this) == null) {
                 PoolStore.promptForUrl(this) { loadData(showOverlay = true) }
             } else {
