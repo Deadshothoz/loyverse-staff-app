@@ -40,6 +40,15 @@
             android:name=".StockCountActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".PoolsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".PoolEditorActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>
