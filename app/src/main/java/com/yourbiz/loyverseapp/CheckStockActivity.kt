@@ -9,6 +9,14 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import java.util.concurrent.Executors
 
+/**
+ * Read-only stock overview.
+ *  - Items that aren't in any pool show as their own row.
+ *  - Items that ARE in a pool are hidden; the pool shows instead, with the
+ *    combined stock of all its items and its own low-stock number.
+ *  - "All items" shows everything (tracked or not). "Low stock" and
+ *    "Out of stock" only include items/pools that have a minimum set.
+ */
 class CheckStockActivity : AppCompatActivity() {
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -20,20 +28,32 @@ class CheckStockActivity : AppCompatActivity() {
     private lateinit var categorySpinner: Spinner
     private lateinit var stockAlertSpinner: Spinner
 
-    /** One row per variant for now - pooling will collapse multiple
-     *  variants into one row here once Manage Pools exists. */
     data class Row(
         val displayName: String,
-        val categoryName: String, // "No category" if none
-        val totalStock: Double,
-        val status: String // "in", "low", "out"
+        val subtitle: String,
+        val categoryName: String,   // "No category" if none; unused for pools
+        val stockText: String,
+        /** "out", "low", "in" (has a minimum and is above it),
+         *  "none" (no minimum set) or "untracked". */
+        val status: String,
+        val isPool: Boolean
     )
 
     private var allRows: List<Row> = emptyList()
     private var filteredRows: List<Row> = emptyList()
 
+    /** Set when pools couldn't be loaded, so the user knows why pooled
+     *  items are showing individually. */
+    private var poolsNote: String? = null
+
     private val stockAlertOptions = listOf("All items", "Low stock", "Out of stock")
     private var categoryOptions: List<String> = listOf("All items", "No category")
+
+    private companion object {
+        const val CATEGORY_ALL = "All items"
+        const val CATEGORY_NONE = "No category"
+        const val CATEGORY_POOLS = "Pools"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,98 +87,118 @@ class CheckStockActivity : AppCompatActivity() {
             override fun onNothingSelected(p: AdapterView<*>?) {}
         }
 
-        loadCatalog()
+        loadData()
     }
 
-    private fun loadCatalog() {
-        if (ItemCache.variants.isNotEmpty()) {
-            buildRows(ItemCache.variants, ItemCache.categories)
+    private fun loadData() {
+        val haveCache = ItemCache.variants.isNotEmpty()
+        val poolsUrl = PoolStore.getUrl(this)
+        if (haveCache && (poolsUrl == null || PoolStore.loaded)) {
+            // Show what we already have instantly, then quietly refresh.
+            buildRows()
             loadingOverlay.visibility = View.GONE
-            statusText.text = "${filteredRows.size} item(s)"
-            refreshCatalogInBackground()
-            return
+        } else {
+            loadingOverlay.visibility = View.VISIBLE
+            statusText.text = "Loading catalog..."
         }
 
-        loadingOverlay.visibility = View.VISIBLE
-        statusText.text = "Loading catalog..."
         executor.execute {
+            var catalogError: String? = null
             try {
                 val token = prefs.getString("api_token", "") ?: ""
                 // Only downloads what changed since the last sync (full
                 // download only the very first time this session).
                 ItemCache.refresh(LoyverseApi(token))
-                val variants = ItemCache.variants
-                val categories = ItemCache.categories
-                runOnUiThread {
-                    buildRows(variants, categories)
-                    loadingOverlay.visibility = View.GONE
-                }
             } catch (e: Exception) {
-                runOnUiThread {
-                    statusText.text = "Failed to load catalog: ${e.message}"
-                    loadingOverlay.visibility = View.GONE
+                catalogError = e.message
+            }
+
+            var poolError: String? = null
+            if (poolsUrl != null) {
+                try {
+                    PoolStore.load(poolsUrl)
+                } catch (e: Exception) {
+                    poolError = e.message
                 }
             }
-        }
-    }
 
-    private fun refreshCatalogInBackground() {
-        executor.execute {
-            try {
-                val token = prefs.getString("api_token", "") ?: ""
-                // Only downloads what changed since the last sync (full
-                // download only the very first time this session).
-                ItemCache.refresh(LoyverseApi(token))
-                val variants = ItemCache.variants
-                val categories = ItemCache.categories
-                runOnUiThread {
-                    buildRows(variants, categories)
+            runOnUiThread {
+                loadingOverlay.visibility = View.GONE
+                poolsNote = when {
+                    poolsUrl == null -> null
+                    poolError != null && !PoolStore.loaded ->
+                        "Pools couldn't load, so pooled items are shown one by one ($poolError)"
+                    else -> null
                 }
-            } catch (e: Exception) {
-                // Silent failure - keep showing whatever is cached.
+                if (ItemCache.variants.isEmpty() && catalogError != null) {
+                    statusText.text = "Failed to load catalog: $catalogError"
+                } else {
+                    buildRows()
+                }
             }
         }
     }
 
     /**
-     * Turns raw variants + categories into display rows, works out each
-     * row's stock status, rebuilds the category filter list from what's
-     * actually in the catalog, and re-applies whatever filters are
-     * currently selected.
+     * Turns the cached catalog + pools into display rows, rebuilds the
+     * category filter from what actually exists, and re-applies whatever
+     * filters are currently selected.
      */
-    private fun buildRows(variants: List<LoyverseApi.Variant>, categories: List<LoyverseApi.Category>) {
-        val categoryNameById = categories.associate { it.id to it.name }
+    private fun buildRows() {
+        val variants = ItemCache.variants
+        val categoryNameById = ItemCache.categories.associate { it.id to it.name }
+        val variantsById = variants.associateBy { it.variantId }
+        val pools = PoolStore.pools
+        val pooledIds = pools.flatMap { it.variantIds }.toHashSet()
 
-        allRows = variants
-            .filter { it.trackStock } // Loyverse's own stock views only ever
-                                       // consider tracked items - an untracked
-                                       // item has no real stock number to
-                                       // report, so it's excluded here too.
+        val poolRows = pools.map { pool ->
+            val total = PoolStore.totalStock(pool, variantsById)
+            Row(
+                displayName = pool.name,
+                subtitle = "Pool · ${pool.variantIds.size} item(s) · Low stock at ${PoolStore.formatQty(pool.minStock)}",
+                categoryName = CATEGORY_POOLS,
+                stockText = "Stock: ${PoolStore.formatQty(total)}",
+                status = PoolStore.status(total, pool.minStock),
+                isPool = true
+            )
+        }
+
+        val itemRows = variants
+            .filter { it.variantId !in pooledIds } // pooled items show via their pool instead
             .map { variant ->
-                val categoryName = variant.categoryId?.let { categoryNameById[it] } ?: "No category"
-                // Loyverse only ever raises a stock alert for an item once
-                // a low-stock threshold has actually been configured for
-                // it. If no threshold is set, we ignore stock level
-                // entirely (even 0) - track_stock could just be flipped on
-                // accidentally with no real monitoring intent behind it.
-                val status = if (variant.lowStockThreshold == null) {
-                    "in"
-                } else when {
+                val categoryName = variant.categoryId?.let { categoryNameById[it] } ?: CATEGORY_NONE
+                // Loyverse only raises a stock alert once a low-stock number is
+                // set for the item, so without one we never flag it - even at 0.
+                val threshold = variant.lowStockThreshold
+                val status = when {
+                    !variant.trackStock -> "untracked"
+                    threshold == null -> "none"
                     variant.currentStock <= 0.0 -> "out"
-                    variant.currentStock < variant.lowStockThreshold -> "low"
+                    variant.currentStock < threshold -> "low"
                     else -> "in"
                 }
-                Row(variant.itemName, categoryName, variant.currentStock, status)
+                Row(
+                    displayName = variant.itemName,
+                    subtitle = categoryName,
+                    categoryName = categoryName,
+                    stockText = if (variant.trackStock) "Stock: ${PoolStore.formatQty(variant.currentStock)}"
+                                else "Not tracked",
+                    status = status,
+                    isPool = false
+                )
             }
-            .sortedBy { it.displayName.lowercase() } // match Loyverse's own alphabetical ordering
 
-        // Rebuild category dropdown from what actually exists in the catalog.
-        val realCategoryNames = allRows
+        allRows = (poolRows + itemRows).sortedBy { it.displayName.lowercase() } // Loyverse-style A-Z
+
+        // Rebuild category dropdown from what actually exists.
+        val realCategoryNames = itemRows
             .map { it.categoryName }
-            .filter { it != "No category" }
+            .filter { it != CATEGORY_NONE }
             .distinct()
             .sorted()
-        categoryOptions = listOf("All items", "No category") + realCategoryNames
+        categoryOptions = listOf(CATEGORY_ALL, CATEGORY_NONE) +
+            (if (poolRows.isNotEmpty()) listOf(CATEGORY_POOLS) else emptyList()) +
+            realCategoryNames
 
         val previousCategorySelection = categorySpinner.selectedItem as? String
         categorySpinner.adapter = ArrayAdapter(
@@ -171,24 +211,25 @@ class CheckStockActivity : AppCompatActivity() {
     }
 
     private fun applyFilters() {
-        val selectedCategory = categorySpinner.selectedItem as? String ?: "All items"
+        val selectedCategory = categorySpinner.selectedItem as? String ?: CATEGORY_ALL
         val selectedStockAlert = stockAlertSpinner.selectedItem as? String ?: "All items"
 
         filteredRows = allRows.filter { row ->
             val matchesCategory = when (selectedCategory) {
-                "All items" -> true
-                else -> row.categoryName == selectedCategory
+                CATEGORY_ALL -> true
+                CATEGORY_POOLS -> row.isPool
+                else -> !row.isPool && row.categoryName == selectedCategory
             }
             val matchesStockAlert = when (selectedStockAlert) {
-                "All items" -> true
                 "Low stock" -> row.status == "low" || row.status == "out"
                 "Out of stock" -> row.status == "out"
-                else -> true
+                else -> true // "All items": everything, tracked or not
             }
             matchesCategory && matchesStockAlert
         }
 
-        statusText.text = "${filteredRows.size} item(s)"
+        val count = "${filteredRows.size} item(s)"
+        statusText.text = poolsNote?.let { "$count\n$it" } ?: count
         resultsListView.adapter = ResultsAdapter()
     }
 
@@ -202,8 +243,10 @@ class CheckStockActivity : AppCompatActivity() {
             val row = filteredRows[position]
 
             view.findViewById<TextView>(R.id.itemNameText).text = row.displayName
-            view.findViewById<TextView>(R.id.categoryText).text = row.categoryName
-            view.findViewById<TextView>(R.id.stockText).text = "Stock: ${row.totalStock}"
+            val subtitle = view.findViewById<TextView>(R.id.categoryText)
+            subtitle.text = row.subtitle
+            if (row.isPool) subtitle.setTextColor(Color.parseColor("#43A047"))
+            view.findViewById<TextView>(R.id.stockText).text = row.stockText
 
             val badge = view.findViewById<TextView>(R.id.statusBadgeText)
             when (row.status) {
@@ -215,9 +258,13 @@ class CheckStockActivity : AppCompatActivity() {
                     badge.text = "LOW STOCK"
                     badge.setTextColor(Color.parseColor("#F2A541"))
                 }
-                else -> {
+                "in" -> {
                     badge.text = "IN STOCK"
                     badge.setTextColor(Color.parseColor("#2E7D32"))
+                }
+                else -> {
+                    // No minimum set, or not tracked: no alert badge.
+                    badge.text = ""
                 }
             }
 
