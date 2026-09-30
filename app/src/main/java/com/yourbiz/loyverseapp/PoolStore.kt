@@ -48,10 +48,11 @@ object PoolStore {
     fun totalStock(pool: Pool, variantsById: Map<String, LoyverseApi.Variant>): Double =
         pool.variantIds.sumOf { variantsById[it]?.currentStock ?: 0.0 }
 
-    /** "out", "low" or "in" - same rules as a normal item with a minimum. */
+    /** "out", "low" or "in" - same rules as a normal item with a minimum.
+     *  Stock exactly at the minimum counts as low. */
     fun status(total: Double, minStock: Double): String = when {
         total <= 0.0 -> "out"
-        total < minStock -> "low"
+        total <= minStock -> "low"
         else -> "in"
     }
 
