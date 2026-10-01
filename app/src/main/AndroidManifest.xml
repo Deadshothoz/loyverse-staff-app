@@ -49,6 +49,15 @@
             android:name=".PoolEditorActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".CompositesActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".CompositeEditorActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>
