@@ -200,6 +200,12 @@ class AddStockActivity : AppCompatActivity() {
     }
 
     private fun addToWorkingList(variant: LoyverseApi.Variant) {
+        if (variant.isComposite) {
+            // A composite item's stock comes from its components - adding to
+            // it would make the app switch tracking on and break the box.
+            Toast.makeText(this, "${variant.itemName} is a composite item - change the stock of its components instead", Toast.LENGTH_LONG).show()
+            return
+        }
         workingItems[variant.variantId] = variant
         refreshWorkingListView()
     }
