@@ -60,16 +60,23 @@ object ItemCache {
 
     /**
      * Applies a delta fetch to the cached list:
-     *  1. Any variant whose item changed is replaced (or added) wholesale.
-     *  2. Any variant whose stock changed - but whose item didn't (e.g. a
+     *  1. Any item that changed has ALL its variants replaced with the new
+     *     ones - so a variant deleted from an item disappears too.
+     *  2. Items deleted in Loyverse are dropped entirely.
+     *  3. Any variant whose stock changed - but whose item didn't (e.g. a
      *     sale at the POS) - gets just its stock number updated.
      * Everything else is left untouched.
      */
     private fun mergeDelta(delta: LoyverseApi.FetchResult) {
+        val old = variants.associateBy { it.variantId }
+        val touchedItemIds = delta.variants.map { it.itemId }.toHashSet()
+        touchedItemIds.addAll(delta.deletedItemIds)
+
         val byId = LinkedHashMap<String, LoyverseApi.Variant>()
-        variants.forEach { byId[it.variantId] = it }
+        variants.filter { it.itemId !in touchedItemIds }.forEach { byId[it.variantId] = it }
+
         delta.variants.forEach { changed ->
-            val existing = byId[changed.variantId]
+            val existing = old[changed.variantId]
             byId[changed.variantId] =
                 if (existing != null && changed.variantId !in delta.stockLevels) {
                     // Item details changed (name, barcode, threshold...) but
