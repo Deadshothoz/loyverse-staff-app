@@ -48,6 +48,10 @@ class HomeActivity : AppCompatActivity() {
             startActivity(Intent(this, PoolsActivity::class.java))
         }
 
+        findViewById<LinearLayout>(R.id.tileComposites).setOnClickListener {
+            startActivity(Intent(this, CompositesActivity::class.java))
+        }
+
         showLastCrashIfAny()
     }
 
