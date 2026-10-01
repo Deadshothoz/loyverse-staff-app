@@ -266,6 +266,18 @@ class LoyverseApi(private val token: String) {
             if (components.isNotEmpty()) {
                 item.put("track_stock", false)
                 item.put("use_production", false)
+                // A composite's cost is worked out by Loyverse from its
+                // components, so it must not be sent ("Cost must not be set
+                // for a composite item"). Purchase cost goes too, same reason.
+                val variants = item.optJSONArray("variants")
+                if (variants != null) {
+                    for (i in 0 until variants.length()) {
+                        variants.optJSONObject(i)?.let {
+                            it.remove("cost")
+                            it.remove("purchase_cost")
+                        }
+                    }
+                }
             }
             true
         }
