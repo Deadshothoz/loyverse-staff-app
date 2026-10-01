@@ -22,7 +22,19 @@ class LoyverseApi(private val token: String) {
         val barcode: String,
         val trackStock: Boolean,
         val categoryId: String?,
-        val lowStockThreshold: Double?
+        val lowStockThreshold: Double?,
+        /** True if this item is a Loyverse composite (e.g. a box made of bars). */
+        val isComposite: Boolean = false,
+        /** What one unit of this composite item is made of. Empty if not composite. */
+        val components: List<Component> = emptyList(),
+        /** How many variants the parent item has. Items with variants can't be composite. */
+        val variantCount: Int = 1
+    )
+
+    /** One ingredient of a composite item: [quantity] of variant [variantId]. */
+    data class Component(
+        val variantId: String,
+        val quantity: Double
     )
 
     data class Category(
@@ -37,7 +49,9 @@ class LoyverseApi(private val token: String) {
      *  so it shows up in stockLevels but not in variants. */
     data class FetchResult(
         val variants: List<Variant>,
-        val stockLevels: Map<String, Pair<String, Double>>
+        val stockLevels: Map<String, Pair<String, Double>>,
+        /** Items deleted in Loyverse since the last sync (delta fetches only). */
+        val deletedItemIds: Set<String> = emptySet()
     )
 
     /**
@@ -83,20 +97,29 @@ class LoyverseApi(private val token: String) {
             cursor = inventoryJson.optString("cursor", "").ifEmpty { null }
         } while (cursor != null)
 
-        // Page through the items list (only changes, if filtered)
+        // Page through the items list (only changes, if filtered). Delta
+        // fetches also ask for deleted items, so the app can drop them.
+        val itemsFilter = if (updatedAtMin != null) "$filterParam&show_deleted=true" else ""
         val results = ArrayList<Variant>()
+        val deletedItemIds = HashSet<String>()
         cursor = null
         do {
-            val url = if (cursor == null) "$baseUrl/items?limit=250$filterParam"
-                      else "$baseUrl/items?limit=250&cursor=$cursor$filterParam"
+            val url = if (cursor == null) "$baseUrl/items?limit=250$itemsFilter"
+                      else "$baseUrl/items?limit=250&cursor=$cursor$itemsFilter"
             val itemsJson = get(url)
             val items = itemsJson.optJSONArray("items") ?: JSONArray()
             for (i in 0 until items.length()) {
                 val item = items.getJSONObject(i)
                 val itemId = item.getString("id")
+                if (!item.isNull("deleted_at") && item.optString("deleted_at").isNotEmpty()) {
+                    deletedItemIds.add(itemId)
+                    continue
+                }
                 val itemName = item.optString("item_name", "Unnamed item")
                 val trackStock = item.optBoolean("track_stock", false)
                 val categoryId = item.optString("category_id", "").ifEmpty { null }
+                val isComposite = item.optBoolean("is_composite", false)
+                val components = parseComponents(item.optJSONArray("components"))
                 val variants = item.optJSONArray("variants") ?: JSONArray()
                 for (v in 0 until variants.length()) {
                     val variant = variants.getJSONObject(v)
@@ -137,7 +160,8 @@ class LoyverseApi(private val token: String) {
                     results.add(
                         Variant(
                             variantId, itemId, itemName, finalStoreId, finalStock,
-                            barcode, trackStock, categoryId, lowStockThreshold
+                            barcode, trackStock, categoryId, lowStockThreshold,
+                            isComposite, components, variants.length()
                         )
                     )
                 }
@@ -146,7 +170,18 @@ class LoyverseApi(private val token: String) {
         } while (cursor != null)
 
         val stockLevels = stockMap.mapValues { (vId, stock) -> Pair(storeMap[vId] ?: "", stock) }
-        return FetchResult(results, stockLevels)
+        return FetchResult(results, stockLevels, deletedItemIds)
+    }
+
+    private fun parseComponents(arr: JSONArray?): List<Component> {
+        if (arr == null) return emptyList()
+        val result = ArrayList<Component>()
+        for (i in 0 until arr.length()) {
+            val c = arr.optJSONObject(i) ?: continue
+            val variantId = c.optString("variant_id", "")
+            if (variantId.isNotEmpty()) result.add(Component(variantId, c.optDouble("quantity", 1.0)))
+        }
+        return result
     }
 
     /**
@@ -201,17 +236,54 @@ class LoyverseApi(private val token: String) {
      * even if multiple variants of the same item are being updated.
      */
     fun updateItemTrackStock(itemId: String, trackStock: Boolean) {
-        // Loyverse's POST /items saves the WHOLE item, not just the fields
-        // sent - sending only {id, track_stock} is rejected ("item_name must
-        // be set"), and leaving out variants/prices/barcodes could wipe them.
-        // So: fetch the item exactly as it is now, flip track_stock, and
-        // send everything back unchanged apart from that.
+        updateItem(itemId) { item ->
+            if (item.optBoolean("track_stock", false) == trackStock) {
+                false // already set - nothing to send
+            } else {
+                item.put("track_stock", trackStock)
+                true
+            }
+        }
+    }
+
+    /**
+     * Makes an item composite with the given components, or - if
+     * [components] is empty - turns it back into a normal item. Loyverse
+     * doesn't allow a composite item to track its own stock (its stock
+     * comes from its components), so tracking is switched off for it.
+     */
+    fun updateItemComposite(itemId: String, components: List<Component>) {
+        updateItem(itemId) { item ->
+            val arr = JSONArray()
+            for (c in components) {
+                val obj = JSONObject()
+                obj.put("variant_id", c.variantId)
+                obj.put("quantity", c.quantity)
+                arr.put(obj)
+            }
+            item.put("is_composite", components.isNotEmpty())
+            item.put("components", arr)
+            if (components.isNotEmpty()) {
+                item.put("track_stock", false)
+                item.put("use_production", false)
+            }
+            true
+        }
+    }
+
+    /**
+     * Loyverse's POST /items saves the WHOLE item, not just the fields
+     * sent - sending only a couple of fields is rejected ("item_name must
+     * be set"), and leaving out variants/prices/barcodes could wipe them.
+     * So: fetch the item exactly as it is now, let [change] edit it, and
+     * send everything back unchanged apart from that. [change] returns
+     * false if there's nothing to send.
+     */
+    private fun updateItem(itemId: String, change: (JSONObject) -> Boolean) {
         val raw = get("$baseUrl/items/$itemId")
         val item = raw.optJSONObject("item") ?: raw
+        if (!change(item)) return
 
-        if (item.optBoolean("track_stock", false) == trackStock) return // already set
-
-        item.put("track_stock", trackStock)
         removeReadOnlyFields(item)
         val variants = item.optJSONArray("variants")
         if (variants != null) {
