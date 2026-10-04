@@ -15,6 +15,22 @@ android {
         versionName = "1.0"
     }
 
+    // Sign every build with the same key, so a new version installs
+    // straight over the old one and keeps its saved token and pools link.
+    // The key file is written by the GitHub build from the KEYSTORE_BASE64
+    // secret. Without it, the build still works but uses a throwaway key.
+    signingConfigs {
+        getByName("debug") {
+            val fixedKey = rootProject.file("signing/debug.keystore")
+            if (fixedKey.exists()) {
+                storeFile = fixedKey
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
